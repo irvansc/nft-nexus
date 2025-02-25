@@ -20,6 +20,7 @@ import { useState, useEffect } from 'react';
 import { NFTMetadata } from '../types/nft';
 import { NEXUS_EXPLORER_URL } from '../config/constants';
 import type { SimpleNFT } from '../../types/contracts/contracts/SimpleNFT';
+import Image from 'next/image';
 
 interface NFTCardProps {
   /** The token ID of the NFT */
@@ -95,12 +96,13 @@ export function NFTCard({ tokenId, metadata, userAddress, nftContract, onTransfe
       {metadata ? (
         <>
           {/* NFT Image Container */}
-          <div className="aspect-square w-full relative bg-gray-50">
-            <img
-              src={metadata.image}
+          <div className="relative w-full aspect-square rounded-lg overflow-hidden">
+            <Image
+              src={metadata.image || '/placeholder.png'}
               alt={formattedName}
-              className="w-full h-full object-contain"
-              loading="lazy"
+              fill
+              className="object-cover"
+              priority={false}
             />
             <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-black/70 backdrop-blur-sm rounded-full">
               <span className="text-xs font-medium text-white">#{tokenId}</span>

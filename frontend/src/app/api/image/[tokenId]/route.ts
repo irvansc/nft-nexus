@@ -1,5 +1,3 @@
-import { NextRequest } from 'next/server';
-
 // Function to generate a deterministic color based on tokenId
 function generateColor(tokenId: string): string {
   // Use the tokenId as a seed for the color
@@ -37,11 +35,11 @@ function generatePattern(tokenId: string): string {
 }
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { tokenId: string } }
-): Promise<Response> {
+  request: Request,
+  { params }: { params: Promise<{ tokenId: string }> }
+) {
   try {
-    const tokenId = params.tokenId;
+    const { tokenId } = await params;
     const backgroundColor = generateColor(tokenId);
     
     const svg = `

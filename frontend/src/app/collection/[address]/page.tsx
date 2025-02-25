@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { ethers } from 'ethers'
 import { use } from 'react'
@@ -22,54 +22,7 @@ export default function CollectionPage({ params }: { params: Promise<{ address: 
   const [isMinting, setIsMinting] = useState(false)
   const [status, setStatus] = useState('')
 
-  useEffect(() => {
-    const initializeContract = async () => {
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          const provider = new ethers.BrowserProvider(window.ethereum)
-          const accounts = await provider.listAccounts()
-          if (accounts.length > 0) {
-            setUserAddress(accounts[0].address)
-          }
-
-          // Create contract instance using the factory
-          const contract = SimpleNFT__factory.connect(address, provider)
-          setNftContract(contract)
-
-          // Debug: Check tokenURI for token #1 if it exists
-          try {
-            const totalSupply = await contract.totalSupply()
-            console.log('Initial total supply:', totalSupply.toString())
-            if (totalSupply > 0) {
-              const tokenURI = await contract.tokenURI(1)
-              console.log('Debug - tokenURI for #1:', tokenURI)
-            }
-          } catch (error) {
-            console.error('Debug - Error checking tokenURI:', error)
-          }
-
-          // Get collection name
-          const name = await contract.name()
-          setCollectionName(name)
-
-          // Check if user is owner
-          const owner = await contract.owner()
-          setIsOwner(owner.toLowerCase() === accounts[0]?.address.toLowerCase())
-
-          // Fetch NFTs
-          await fetchCollectionNFTs(contract)
-        } catch (error) {
-          console.error('Error initializing contract:', error)
-        } finally {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    initializeContract()
-  }, [address])
-
-  const fetchCollectionNFTs = async (contract: SimpleNFT) => {
+  const fetchCollectionNFTs = useCallback(async (contract: SimpleNFT) => {
     try {
       const totalSupply = await contract.totalSupply()
       console.log('Total supply from contract:', totalSupply.toString())
@@ -161,7 +114,54 @@ export default function CollectionPage({ params }: { params: Promise<{ address: 
     } catch (error) {
       console.error('Error fetching NFTs:', error)
     }
-  }
+  }, [address])
+
+  useEffect(() => {
+    const initializeContract = async () => {
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          const provider = new ethers.BrowserProvider(window.ethereum)
+          const accounts = await provider.listAccounts()
+          if (accounts.length > 0) {
+            setUserAddress(accounts[0].address)
+          }
+
+          // Create contract instance using the factory
+          const contract = SimpleNFT__factory.connect(address, provider)
+          setNftContract(contract)
+
+          // Debug: Check tokenURI for token #1 if it exists
+          try {
+            const totalSupply = await contract.totalSupply()
+            console.log('Initial total supply:', totalSupply.toString())
+            if (totalSupply > 0) {
+              const tokenURI = await contract.tokenURI(1)
+              console.log('Debug - tokenURI for #1:', tokenURI)
+            }
+          } catch (error) {
+            console.error('Debug - Error checking tokenURI:', error)
+          }
+
+          // Get collection name
+          const name = await contract.name()
+          setCollectionName(name)
+
+          // Check if user is owner
+          const owner = await contract.owner()
+          setIsOwner(owner.toLowerCase() === accounts[0]?.address.toLowerCase())
+
+          // Fetch NFTs
+          await fetchCollectionNFTs(contract)
+        } catch (error) {
+          console.error('Error initializing contract:', error)
+        } finally {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    initializeContract()
+  }, [address, fetchCollectionNFTs])
 
   const handleTransfer = async (tokenId: string, to: string) => {
     if (!nftContract || !to) return

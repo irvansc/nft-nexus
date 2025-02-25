@@ -1,32 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ethers, Contract } from 'ethers'
+import { ethers } from 'ethers'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
+import { NEXUS_EXPLORER_URL, NEXUS_RPC_URL, NEXUS_CHAIN_ID_HEX } from './config/constants'
 import { SimpleNFT__factory } from '../types/contracts/factories/contracts/SimpleNFT__factory'
-
-const NEXUS_CHAIN_ID = '0x189' // Incorrect, let's fix this
-const NEXUS_RPC_URL = 'https://rpc.nexus.xyz/http'
-const NEXUS_EXPLORER_URL = 'https://explorer.nexus.xyz'
-
-// Define Ethereum provider interface
-interface EthereumProvider {
-  request: (args: { method: string; params?: any[] }) => Promise<any>
-  on: (event: string, callback: (...args: any[]) => void) => void
-  removeListener: (event: string, callback: (...args: any[]) => void) => void
-}
-
-// Extend window interface with proper type merging
-interface Window {
-  ethereum?: EthereumProvider
-}
-
-// Convert decimal to hex for chain ID (393 = 0x189)
-const CHAIN_ID_DECIMAL = 393
-const NEXUS_CHAIN_ID_HEX = `0x${CHAIN_ID_DECIMAL.toString(16)}`
-
-// Add a helper function to convert between hex and decimal chain IDs
-const toHex = (num: number) => `0x${num.toString(16)}`
+import type { SimpleNFT } from '../types/contracts/contracts/SimpleNFT'
+import type { Log } from 'ethers'
 
 interface NFTMetadata {
   name: string;
@@ -61,6 +42,14 @@ const generateNFTSymbol = (name: string): string => {
   return initials.slice(0, 4)
 }
 
+interface NFTCardProps {
+  tokenId: string;
+  metadata: NFTMetadata | null;
+  userAddress: string;
+  nftContract: SimpleNFT | null;
+  onTransfer: (tokenId: string, to: string) => Promise<void>;
+}
+
 export default function Home() {
   const router = useRouter()
   const [isConnected, setIsConnected] = useState(false)
@@ -68,16 +57,15 @@ export default function Home() {
   const [userAddress, setUserAddress] = useState('')
   const [nftName, setNftName] = useState('MyNFT')
   const [status, setStatus] = useState('')
-  const [contractAddress, setContractAddress] = useState('')
+  const [contractAddress, setContractAddress] = useState<string | null>(null)
   const [uploadedImage, setUploadedImage] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const [nftContract, setNftContract] = useState<Contract | null>(null)
+  const [nftContract, setNftContract] = useState<SimpleNFT | null>(null)
   const [isMinting, setIsMinting] = useState(false)
   const [ownedNFTs, setOwnedNFTs] = useState<Array<{ tokenId: string; metadata: NFTMetadata | null }>>([])
   const [isLoadingNFTs, setIsLoadingNFTs] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [lastMintedTokenId, setLastMintedTokenId] = useState<string | null>(null)
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false)
   const [visitAddress, setVisitAddress] = useState('')
 
@@ -102,7 +90,7 @@ export default function Home() {
     if (file && file.type.startsWith('image/')) {
       // Instead of uploading, just store the file and show preview
       setUploadedImage(file)
-      setImagePreview(URL.createObjectURL(file))
+      setPreviewUrl(URL.createObjectURL(file))
     }
   }
 
@@ -111,45 +99,7 @@ export default function Home() {
     if (file) {
       // Instead of uploading, just store the file and show preview
       setUploadedImage(file)
-      setImagePreview(URL.createObjectURL(file))
-    }
-  }
-
-  const handleImageUpload = async (file: File, tokenId?: string) => {
-    if (!contractAddress) {
-      console.error('Contract address is required for upload')
-      return null
-    }
-
-    try {
-      setStatus('Uploading image...')
-      const formData = new FormData()
-      formData.append('file', file)
-      if (tokenId) {
-        formData.append('tokenId', tokenId)
-      }
-      formData.append('contractAddress', contractAddress)
-
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Upload failed')
-      }
-
-      if (data.success && data.filename) {
-        return data.filename
-      } else {
-        throw new Error('Invalid response from server')
-      }
-    } catch (error: any) {
-      console.error('Upload error:', error)
-      setStatus(`Upload failed: ${error.message}`)
-      return null
+      setPreviewUrl(URL.createObjectURL(file))
     }
   }
 
@@ -334,7 +284,7 @@ export default function Home() {
 
         // Only update state after successful deployment and image upload
         setContractAddress(address)
-        setNftContract(simpleNFT as unknown as Contract)
+        setNftContract(simpleNFT as SimpleNFT)
         setStatus(`NFT Collection deployed successfully!
           Contract: ${address}
           View on Explorer: ${NEXUS_EXPLORER_URL}/address/${address}`)
@@ -353,39 +303,23 @@ export default function Home() {
     }
   }
 
-  // Add function to fetch metadata
-  const fetchNFTMetadata = async (baseURI: string, tokenId: string): Promise<NFTMetadata | null> => {
-    try {
-      const response = await fetch(`${baseURI}${tokenId}?contract=${contractAddress}`)
-      if (!response.ok) throw new Error('Failed to fetch metadata')
-      const metadata = await response.json()
-      return metadata
-    } catch (error) {
-      console.error(`Error fetching metadata for token ${tokenId}:`, error)
-      return null
-    }
-  }
-
-  // Rename and update the fetch function to get all NFTs in collection
-  const fetchCollectionNFTs = async () => {
-    if (!nftContract) return;
+  // Move fetchCollectionNFTs inside useCallback
+  const fetchCollectionNFTs = useCallback(async (contract: SimpleNFT) => {
+    if (!contract) return;
 
     try {
       setIsLoadingNFTs(true);
-      const totalSupply = await nftContract.totalSupply();
+      const totalSupply = await contract.totalSupply();
       const nfts: Array<{ tokenId: string; metadata: NFTMetadata | null }> = [];
       
-      // Fetch all tokens in the collection
-      for (let i = 1; i <= totalSupply.toString(); i++) {
+      for (let i = 1; i <= Number(totalSupply); i++) {
         try {
-          // Get the token URI and fetch metadata
-          const tokenURI = await nftContract.tokenURI(i);
+          const tokenURI = await contract.tokenURI(i);
           const response = await fetch(tokenURI);
           const metadata = response.ok ? await response.json() : null;
           nfts.push({ tokenId: i.toString(), metadata });
         } catch (error) {
           console.error(`Error fetching NFT ${i}:`, error);
-          // Add the NFT with null metadata if there's an error
           nfts.push({ tokenId: i.toString(), metadata: null });
         }
       }
@@ -396,71 +330,79 @@ export default function Home() {
     } finally {
       setIsLoadingNFTs(false);
     }
-  };
+  }, []);
 
   // Update mintNFT to use new function name
   const mintNFT = async () => {
-    if (!nftContract || !contractAddress) {
-      setStatus('No NFT contract available. Please deploy one first.');
-      return;
+    if (!nftContract) {
+      setStatus('No NFT contract available')
+      return
     }
 
     try {
-      setIsMinting(true);
-      setStatus('Initiating NFT mint...');
+      setIsMinting(true)
+      setStatus('Initiating NFT mint...')
 
-      const tx = await nftContract.mint();
-      setStatus(`Minting NFT... Transaction: ${tx.hash}\nMonitoring transaction status...`);
-
-      const receipt = await tx.wait();
+      const signer = await new ethers.BrowserProvider(window.ethereum).getSigner()
+      const contractWithSigner = nftContract.connect(signer)
       
-      if (receipt.status === 1) {
-        const mintEvent = receipt.logs.find(
-          (log: any) => log.fragment?.name === 'Transfer' && 
-          log.args?.from === '0x0000000000000000000000000000000000000000'
-        );
-        
-        const tokenId = mintEvent ? mintEvent.args.tokenId.toString() : 'unknown';
-        setLastMintedTokenId(tokenId);
+      const tx = await contractWithSigner.mint()
+      setStatus(`Minting NFT... Transaction: ${tx.hash}\nMonitoring transaction status...`)
 
-        // Upload the image with the token ID if we have one from deployment
-        if (uploadedImage) {
-          await handleImageUpload(uploadedImage, tokenId);
+      const receipt = await tx.wait()
+      
+      if (receipt && receipt.status === 1) {
+        const mintEvent = receipt.logs.find(
+          (log: Log) => {
+            try {
+              const parsedLog = nftContract.interface.parseLog(log)
+              return parsedLog?.name === 'Transfer' && 
+                     parsedLog.args[0] === ethers.ZeroAddress
+            } catch {
+              return false
+            }
+          }
+        )
+
+        let tokenId = 'unknown'
+        try {
+          if (mintEvent) {
+            const parsedLog = nftContract.interface.parseLog(mintEvent)
+            if (parsedLog) {
+              tokenId = parsedLog.args[2].toString()
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing mint event:', error)
         }
-        
+
         setStatus(`NFT minted successfully!
           Transaction: ${tx.hash}
           Token ID: ${tokenId}
-          View on Explorer: ${NEXUS_EXPLORER_URL}/tx/${tx.hash}`);
+          View on Explorer: ${NEXUS_EXPLORER_URL}/tx/${tx.hash}`)
 
         // Refresh the gallery
-        await fetchCollectionNFTs();
+        await fetchCollectionNFTs(nftContract)
       } else {
-        throw new Error('Minting failed');
+        throw new Error('Minting failed')
       }
     } catch (error: any) {
-      console.error('Minting error:', error);
-      setStatus(`Minting failed: ${error.message || 'Unknown error'}`);
+      console.error('Minting error:', error)
+      setStatus(`Minting failed: ${error.message || 'Unknown error'}`)
     } finally {
-      setIsMinting(false);
+      setIsMinting(false)
     }
-  };
+  }
 
   // Update effect to use new function name
   useEffect(() => {
     if (nftContract) {
-      fetchCollectionNFTs();
+      fetchCollectionNFTs(nftContract);
     }
-  }, [nftContract]);
+  }, [nftContract, fetchCollectionNFTs]);
 
   // Add NFTCard component
-  const NFTCard = ({ tokenId, metadata, userAddress, nftContract, onTransfer }: {
-    tokenId: string;
-    metadata: NFTMetadata | null;
-    userAddress: string;
-    nftContract: Contract | null;
-    onTransfer: (tokenId: string, to: string) => Promise<void>;
-  }) => {
+  const NFTCard = ({ tokenId, metadata, userAddress, nftContract, onTransfer }: NFTCardProps) => {
     const [owner, setOwner] = useState<string | null>(null);
     const [isOwner, setIsOwner] = useState(false);
     const [transferAddress, setTransferAddress] = useState('');
@@ -498,15 +440,13 @@ export default function Home() {
       <div className="bg-white rounded-2xl overflow-hidden hover:shadow-lg transition-shadow duration-300">
         {metadata ? (
           <>
-            <div className="aspect-square w-full relative">
-              <img
+            <div className="relative w-full aspect-square rounded-lg overflow-hidden">
+              <Image
                 src={metadata.image}
                 alt={metadata.name}
-                className="w-full h-full object-cover"
+                fill
+                className="object-cover"
               />
-              <div className="absolute top-3 right-3 px-2 py-1 bg-black/70 backdrop-blur-sm rounded-full">
-                <span className="text-xs font-medium text-white">#{tokenId}</span>
-              </div>
             </div>
             <div className="p-4 space-y-3">
               <h3 className="font-medium text-gray-900">
@@ -565,56 +505,6 @@ export default function Home() {
     );
   };
 
-  // Update NFT Gallery component to use new function name
-  const NFTGallery = () => {
-    const handleTransfer = async (tokenId: string, to: string) => {
-      if (!nftContract || !to) return;
-      
-      try {
-        const tx = await nftContract.transferFrom(userAddress, to, tokenId);
-        await tx.wait();
-        await fetchCollectionNFTs();
-      } catch (error) {
-        console.error('Transfer error:', error);
-      }
-    };
-
-    if (isLoadingNFTs) {
-      return (
-        <div className="w-full flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-2 border-black"></div>
-        </div>
-      );
-    }
-
-    if (ownedNFTs.length === 0) {
-      return (
-        <div className="w-full py-16">
-          <p className="text-center text-gray-500">No NFTs in collection</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="w-full py-8 px-4">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {ownedNFTs.map(({ tokenId, metadata }) => (
-              <NFTCard
-                key={tokenId}
-                tokenId={tokenId}
-                metadata={metadata}
-                userAddress={userAddress}
-                nftContract={nftContract}
-                onTransfer={handleTransfer}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   const formatAddress = (address: string | null | undefined) => {
     if (!address || typeof address !== 'string') return ''
     return `${address.slice(0, 6)}...${address.slice(-4)}`
@@ -627,7 +517,7 @@ export default function Home() {
     try {
       const tx = await nftContract.transferFrom(userAddress, to, tokenId);
       await tx.wait();
-      await fetchCollectionNFTs();
+      await fetchCollectionNFTs(nftContract);
     } catch (error) {
       console.error('Transfer error:', error);
     }
@@ -839,18 +729,14 @@ export default function Home() {
                       onDrop={handleDrop}
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      {imagePreview ? (
-                        <img
-                          src={imagePreview}
-                          alt="Preview"
-                          className="w-full h-full object-contain rounded-lg"
-                        />
-                      ) : (
-                        <div className="text-center p-4">
-                          <svg className="w-6 h-6 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          <p className="text-xs text-gray-500">Upload image</p>
+                      {previewUrl && (
+                        <div className="relative w-full aspect-square rounded-lg overflow-hidden">
+                          <Image
+                            src={previewUrl}
+                            alt="NFT Preview"
+                            fill
+                            className="object-cover"
+                          />
                         </div>
                       )}
                       <input
@@ -916,7 +802,7 @@ export default function Home() {
                         setNftContract(null)
                         setNftName('MyNFT')
                         setUploadedImage(null)
-                        setImagePreview(null)
+                        setPreviewUrl(null)
                         setStatus('')
                       }}
                       className="w-full py-2 px-4 rounded-lg text-xs font-medium text-gray-600 bg-gray-50
