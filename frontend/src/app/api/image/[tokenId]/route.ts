@@ -45,7 +45,13 @@ export async function GET(
     const backgroundColor = generateColor(tokenId);
     
     const svg = `
-      <svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+      <svg 
+        width="500" 
+        height="500" 
+        viewBox="0 0 500 500" 
+        xmlns="http://www.w3.org/2000/svg"
+        preserveAspectRatio="xMidYMid meet"
+      >
         <defs>
           <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" style="stop-color:${backgroundColor};stop-opacity:1" />
@@ -54,7 +60,7 @@ export async function GET(
         </defs>
         
         <!-- Background -->
-        <rect width="500" height="500" fill="url(#grad)"/>
+        <rect width="100%" height="100%" fill="url(#grad)"/>
         
         <!-- Pattern -->
         ${generatePattern(tokenId)}
@@ -74,7 +80,7 @@ export async function GET(
           #${tokenId}
         </text>
       </svg>
-    `;
+    `.trim();
     
     return new NextResponse(svg, {
       headers: {

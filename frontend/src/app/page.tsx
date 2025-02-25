@@ -100,18 +100,27 @@ export default function Home() {
 
     const file = e.dataTransfer.files[0]
     if (file && file.type.startsWith('image/')) {
-      await handleImageUpload(file)
+      // Instead of uploading, just store the file and show preview
+      setUploadedImage(file)
+      setImagePreview(URL.createObjectURL(file))
     }
   }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      await handleImageUpload(file)
+      // Instead of uploading, just store the file and show preview
+      setUploadedImage(file)
+      setImagePreview(URL.createObjectURL(file))
     }
   }
 
   const handleImageUpload = async (file: File, tokenId?: string) => {
+    if (!contractAddress) {
+      console.error('Contract address is required for upload')
+      return null
+    }
+
     try {
       setStatus('Uploading image...')
       const formData = new FormData()
@@ -119,6 +128,7 @@ export default function Home() {
       if (tokenId) {
         formData.append('tokenId', tokenId)
       }
+      formData.append('contractAddress', contractAddress)
 
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -132,17 +142,14 @@ export default function Home() {
       }
 
       if (data.success && data.filename) {
-        setUploadedImage(file)
-        setImagePreview(data.filename)
-        setStatus('Image uploaded successfully')
+        return data.filename
       } else {
         throw new Error('Invalid response from server')
       }
     } catch (error: any) {
       console.error('Upload error:', error)
       setStatus(`Upload failed: ${error.message}`)
-      setUploadedImage(null)
-      setImagePreview(null)
+      return null
     }
   }
 
@@ -238,200 +245,118 @@ export default function Home() {
   }
 
   const deployNFT = async () => {
+    if (!nftName) {
+      setStatus('Please enter a collection name')
+      return
+    }
+
     try {
-      if (!uploadedImage) {
-        throw new Error('Please upload an image first')
-      }
+      setIsMinting(true)
+      setStatus('Validating configuration...')
 
-      if (typeof window.ethereum === 'undefined') {
-        throw new Error('Please install MetaMask to use this dApp')
-      }
-
-      if (!isCorrectNetwork) {
-        throw new Error('Please switch to the Nexus network')
-      }
-
-      // Generate symbol from name
-      const symbol = generateNFTSymbol(nftName)
-
-      // Get and validate the API URL
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin
-      if (!apiUrl) {
-        throw new Error('NEXT_PUBLIC_API_URL environment variable is not set and window.location.origin is not available')
-      }
-
-      // Validate that the API URL is accessible
+      // Validate API URL by checking the image endpoint instead of metadata
+      // since metadata requires a contract address
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
       try {
-        const apiCheckResponse = await fetch(`${apiUrl}/api/metadata/1`)
-        if (!apiCheckResponse.ok) {
+        const validationResponse = await fetch(`${apiUrl}/api/image/1`)
+        if (!validationResponse.ok && validationResponse.status !== 400) {
           throw new Error(`API endpoint not accessible. Please ensure NEXT_PUBLIC_API_URL (${apiUrl}) is correct and the server is running.`)
         }
       } catch (error: any) {
+        console.error('API validation error:', error)
         throw new Error(`Failed to validate API URL (${apiUrl}): ${error.message}. Please check your NEXT_PUBLIC_API_URL setting.`)
       }
 
-      console.log('Initial API URL:', apiUrl) // Debug log
-
-      setStatus('Connecting to MetaMask...')
-      await window.ethereum.request({ method: 'eth_requestAccounts' })
-      
-      const provider = new ethers.BrowserProvider(window.ethereum, {
-        // Configure the network properly with chainId
-        chainId: CHAIN_ID_DECIMAL,
-        name: 'Nexus',
-        ensAddress: undefined
-      })
-      const signer = await provider.getSigner()
-      
-      setStatus('Preparing deployment...')
-      
-      const response = await fetch('/api/contract-artifact')
-      if (!response.ok) {
-        throw new Error('Failed to fetch contract artifact')
+      // Get the contract artifact
+      setStatus('Loading contract artifact...')
+      const artifactResponse = await fetch('/api/contract-artifact')
+      if (!artifactResponse.ok) {
+        throw new Error('Failed to load contract artifact')
       }
-      const SimpleNFTArtifact = await response.json()
-      
+      const artifact = await artifactResponse.json()
+
+      // Initialize contract factory
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      const signer = await provider.getSigner()
       const factory = new ethers.ContractFactory(
-        SimpleNFTArtifact.abi,
-        SimpleNFTArtifact.bytecode,
+        artifact.abi,
+        artifact.bytecode,
         signer
       )
 
-      // Ensure the base URI is properly formatted with http/https and trailing slash
-      let baseUri = apiUrl
-      if (!baseUri.startsWith('http://') && !baseUri.startsWith('https://')) {
-        baseUri = `http://${baseUri}`
-      }
-      baseUri = `${baseUri.replace(/\/+$/, '')}/api/metadata/`
-
-      // Additional validation for base URI format
-      if (!baseUri || !baseUri.startsWith('http')) {
-        throw new Error(`Invalid base URI format: ${baseUri}. Must start with http:// or https://`)
-      }
-
-      // Validate base URI length
-      if (baseUri.length === 0) {
-        throw new Error('Base URI cannot be empty')
-      }
-
-      console.log('Using base URI:', baseUri) // Debug log
-
-      // Test the metadata endpoint before deployment
-      try {
-        const testResponse = await fetch(`${baseUri}1`)
-        if (!testResponse.ok) {
-          console.warn('Metadata endpoint test failed:', await testResponse.text())
-        } else {
-          console.log('Metadata endpoint test successful')
-        }
-      } catch (error) {
-        console.warn('Metadata endpoint test error:', error)
-      }
-
+      // Deploy the contract
       setStatus('Deploying NFT contract...')
+      const deployTx = await factory.deploy(
+        nftName,
+        generateNFTSymbol(nftName),
+        signer.address
+      )
 
-      try {
-        // Log deployment parameters with generated symbol
-        console.log('Deployment parameters:', {
-          name: nftName,
-          symbol,
-          baseUri
-        })
+      // Get the transaction hash and update status
+      const deployTx2 = deployTx.deploymentTransaction()
+      if (!deployTx2) throw new Error('No deployment transaction found')
+      const txHash = deployTx2.hash
+      setStatus(`Deploying NFT contract... Transaction: ${txHash}\nMonitoring transaction status...`)
 
-        // Use generated symbol in deployment
-        const deployTx = await factory.getDeployTransaction(
-          nftName,
-          symbol,
-          await signer.getAddress() // Use getAddress instead of address property
-        )
+      const deployedContract = await deployTx.waitForDeployment()
+      const receipt = await deployTx2.wait()
 
-        console.log('Deploy transaction data:', deployTx) // Debug log
+      if (receipt && receipt.status === 1) {
+        const address = await deployedContract.getAddress()
 
-        // Declare gasLimit outside try-catch
-        let gasLimit: bigint;
-        
-        try {
-          // Try gas estimation with detailed error handling
-          const gasEstimate = await provider.estimateGas(deployTx)
-          console.log('Estimated gas:', gasEstimate.toString())
-          
-          // Add 20% buffer to gas estimate
-          gasLimit = (gasEstimate * BigInt(120)) / BigInt(100)
-          console.log('Using gas limit:', gasLimit.toString())
-        } catch (error: any) {
-          console.log('Gas estimation failed:', error)
-          // If gas estimation fails, use fixed gas limit
-          console.log('Falling back to fixed gas limit')
-          gasLimit = BigInt(3000000)
-        }
+        // Set the base URI after deployment
+        const baseUri = `${apiUrl.replace(/\/+$/, '')}/api/metadata/`
+        console.log('Setting base URI:', baseUri)
+        const simpleNFT = SimpleNFT__factory.connect(address, signer)
+        await simpleNFT.setBaseURI(baseUri)
 
-        setStatus('Deploying NFT contract...')
-        
-        const nft = await factory.deploy(
-          nftName,
-          symbol,
-          await signer.getAddress(), // Use getAddress instead of address property
-          {
-            gasLimit
+        // Store contract address in a local variable
+        const contractAddr = address
+
+        // Upload the image using the local contract address variable
+        if (uploadedImage) {
+          const formData = new FormData()
+          formData.append('file', uploadedImage)
+          formData.append('contractAddress', contractAddr)
+          formData.append('tokenId', '1') // First NFT will always be #1
+
+          setStatus('Uploading image...')
+          const uploadResponse = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+          })
+
+          const uploadData = await uploadResponse.json()
+          if (!uploadResponse.ok || !uploadData.success) {
+            throw new Error(uploadData.error || 'Failed to upload image')
           }
-        )
-        
-        // Get the transaction hash and update status
-        const deployTx2 = nft.deploymentTransaction()
-        if (!deployTx2) throw new Error('No deployment transaction found')
-        const txHash = deployTx2.hash
-        setStatus(`Deploying NFT contract... Transaction: ${txHash}\nMonitoring transaction status...`)
-        
-        const deployedContract = await nft.waitForDeployment()
-        const receipt = await deployTx2.wait()
-        
-        if (receipt && receipt.status === 1) {
-          const address = await deployedContract.getAddress()
+        }
 
-          // Set the base URI after deployment
-          const baseUri = `${apiUrl.replace(/\/+$/, '')}/api/metadata/`
-          console.log('Setting base URI:', baseUri)
-          const simpleNFT = SimpleNFT__factory.connect(address, signer)
-          await simpleNFT.setBaseURI(baseUri)
-          
-          setContractAddress(address)
-          setNftContract(deployedContract as Contract)
-          setStatus(`NFT contract deployed successfully!
-            Transaction: ${txHash}
-            Contract Address: ${address}
-            View on Explorer: ${NEXUS_EXPLORER_URL}/tx/${txHash}`)
-          
-          // Navigate to the collection page
-          router.push(`/collection/${address}`)
-        } else {
-          throw new Error('Transaction failed')
-        }
-      } catch (error: any) {
-        console.error('Deployment error details:', error)
-        if (error.code === 'INSUFFICIENT_FUNDS') {
-          throw new Error('Insufficient funds for deployment')
-        } else if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
-          throw new Error('Unable to estimate gas. Please check the contract parameters.')
-        } else if (error.data) {
-          // Try to extract more detailed error information
-          throw new Error(`Deployment failed: ${error.data.message || error.message || 'Unknown error'}`)
-        } else {
-          throw new Error(`Deployment failed: ${error.message || 'Unknown error'}`)
-        }
+        // Only update state after successful deployment and image upload
+        setContractAddress(address)
+        setNftContract(simpleNFT as unknown as Contract)
+        setStatus(`NFT Collection deployed successfully!
+          Contract: ${address}
+          View on Explorer: ${NEXUS_EXPLORER_URL}/address/${address}`)
+
+        // Redirect to collection page
+        router.push(`/collection/${address}`)
+      } else {
+        throw new Error('Deployment failed')
       }
     } catch (error: any) {
-      console.error('Deployment error:', error)
-      setStatus(`Error: ${error.message || 'Unknown error occurred'}`)
-      // Clear states on error
-      setContractAddress('')
-      setNftContract(null)
+      console.error('Deployment error details:', error)
+      setStatus(`Deployment failed: ${error.message}`)
+      throw error
+    } finally {
+      setIsMinting(false)
     }
   }
 
   // Add function to fetch metadata
   const fetchNFTMetadata = async (baseURI: string, tokenId: string): Promise<NFTMetadata | null> => {
     try {
-      const response = await fetch(`${baseURI}${tokenId}`)
+      const response = await fetch(`${baseURI}${tokenId}?contract=${contractAddress}`)
       if (!response.ok) throw new Error('Failed to fetch metadata')
       const metadata = await response.json()
       return metadata

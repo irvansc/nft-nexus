@@ -17,8 +17,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { getStorage, ref, listAll, getDownloadURL, StorageReference } from 'firebase/storage';
+import { app } from '../../../../config/firebase';
 
 /**
  * Interface defining the structure of NFT metadata
@@ -63,21 +63,67 @@ function validateMetadata(metadata: NFTMetadata): boolean {
   );
 }
 
-// Helper function to find the most recent uploaded image for a token
-function findUploadedImage(tokenId: string): string | null {
-  const uploadsDir = join(process.cwd(), 'public/uploads');
-  if (!existsSync(uploadsDir)) return null;
+// Helper function to find the collection image
+async function findUploadedImage(contractAddress: string): Promise<string | null> {
+  try {
+    console.log('[findUploadedImage] Looking for collection image:', {
+      contractAddress,
+      searchPath: `collections/${contractAddress.toLowerCase()}`
+    });
 
-  // Check for files matching the pattern token-{tokenId}-*
-  const fs = require('fs');
-  const files = fs.readdirSync(uploadsDir);
-  const tokenFiles = files.filter((file: string) => file.startsWith(`token-${tokenId}-`));
+    const storage = getStorage(app);
+    const collectionPath = `collections/${contractAddress.toLowerCase()}`;
+    const listRef = ref(storage, collectionPath);
+    
+    try {
+      // List all items in the collection directory
+      const { items } = await listAll(listRef);
+      console.log('[findUploadedImage] Files in collection:', {
+        path: collectionPath,
+        fileCount: items.length,
+        files: items.map(item => ({
+          name: item.name,
+          fullPath: item.fullPath
+        }))
+      });
+      
+      // Find the collection image
+      const collectionImage = items.find((item: StorageReference) => 
+        item.name.startsWith('collection-')
+      );
 
-  if (tokenFiles.length === 0) return null;
+      if (!collectionImage) {
+        console.log('[findUploadedImage] No collection image found');
+        return null;
+      }
 
-  // Sort by timestamp (which is part of the filename) to get the most recent
-  const mostRecent = tokenFiles.sort().reverse()[0];
-  return `/uploads/${mostRecent}`;
+      // Get the download URL
+      try {
+        const downloadURL = await getDownloadURL(collectionImage);
+        console.log('[findUploadedImage] Found image URL:', downloadURL);
+        return downloadURL;
+      } catch (urlError) {
+        console.error('[findUploadedImage] Error getting download URL:', {
+          error: urlError,
+          file: collectionImage.fullPath
+        });
+        return null;
+      }
+    } catch (listError) {
+      console.error('[findUploadedImage] Error listing files:', {
+        error: listError,
+        path: collectionPath
+      });
+      return null;
+    }
+  } catch (error) {
+    console.error('[findUploadedImage] Error initializing storage:', {
+      error,
+      app: !!app,
+      hasFirebase: !!getStorage
+    });
+    return null;
+  }
 }
 
 /**
@@ -86,26 +132,41 @@ function findUploadedImage(tokenId: string): string | null {
  */
 export async function GET(
   request: Request,
-  context: { params: { tokenId: string } }
+  context: { params: Promise<{ tokenId: string }> }
 ) {
-  console.log('Metadata request received for token:', context.params.tokenId);
+  // Await the params object
+  const { tokenId } = await context.params;
+  console.log('[metadata] Request received for token:', tokenId);
   
   try {
-    const tokenId = context.params.tokenId;
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
     const websiteUrl = process.env.NEXT_PUBLIC_WEBSITE_URL || 'http://localhost:3000';
 
-    // Check for uploaded image first
-    const uploadedImage = findUploadedImage(tokenId);
-    console.log('Uploaded image path:', uploadedImage);
+    // Get contract address from query params
+    const url = new URL(request.url);
+    const contractAddress = url.searchParams.get('contract');
+    
+    if (!contractAddress) {
+      console.error('[metadata] Contract address is missing from request:', request.url);
+      return NextResponse.json(
+        { error: 'Contract address is required' },
+        { status: 400 }
+      );
+    }
+
+    // Check for collection image
+    const uploadedImage = await findUploadedImage(contractAddress);
+    console.log('[metadata] Collection image check result:', {
+      contractAddress,
+      hasUploadedImage: !!uploadedImage,
+      uploadedImageUrl: uploadedImage
+    });
 
     // Generate OpenSea-compatible metadata
     const metadata: NFTMetadata = {
       name: `MyNFT #${tokenId}`,
       description: `NFT #${tokenId} on the Nexus network.`,
-      image: uploadedImage 
-        ? `${apiUrl}${uploadedImage}` 
-        : `${apiUrl}/api/image/${tokenId}`,
+      image: uploadedImage || `${apiUrl}/api/image/${tokenId}`,
       external_url: `${websiteUrl}/nft/${tokenId}`,
       attributes: [
         {
@@ -126,21 +187,28 @@ export async function GET(
 
     // Validate metadata before sending
     if (!validateMetadata(metadata)) {
-      console.error('Invalid metadata structure:', metadata);
-      throw new Error('Invalid metadata structure');
+      console.error('[metadata] Invalid metadata structure:', metadata);
+      return NextResponse.json(
+        { error: 'Invalid metadata structure' },
+        { status: 500 }
+      );
     }
     
-    console.log('Serving metadata with image:', metadata.image);
+    console.log('[metadata] Serving metadata:', {
+      tokenId,
+      imageUrl: metadata.image,
+      imageType: uploadedImage ? "Uploaded" : "Generated"
+    });
     
     // Return metadata with proper headers
     return NextResponse.json(metadata, {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=31536000, immutable'
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
       }
     });
   } catch (error: any) {
-    console.error('Error generating metadata:', error);
+    console.error('[metadata] Error:', error);
     return NextResponse.json(
       { error: error.message || 'Failed to generate metadata' },
       { 

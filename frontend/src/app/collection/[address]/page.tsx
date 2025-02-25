@@ -101,13 +101,12 @@ export default function CollectionPage({ params }: { params: Promise<{ address: 
             const baseURL = process.env.NEXT_PUBLIC_API_URL || window.location.origin
             console.log('Base URL:', baseURL)
             
-            // If tokenURI already contains the full path, use it directly
-            if (tokenURI.includes('api/metadata/')) {
-              metadataURL = `${baseURL.replace(/\/+$/, '')}/${tokenURI.replace(/^\/+/, '')}`
-            } else {
-              // Otherwise, construct the full metadata URL
-              metadataURL = `${baseURL.replace(/\/+$/, '')}/api/metadata/${i}`
-            }
+            // Always construct the full metadata URL with contract address
+            metadataURL = `${baseURL.replace(/\/+$/, '')}/api/metadata/${i}?contract=${address}`
+          } else if (!tokenURI.includes('contract=')) {
+            // If it's a full URL but missing contract parameter, add it
+            const separator = tokenURI.includes('?') ? '&' : '?'
+            metadataURL = `${tokenURI}${separator}contract=${address}`
           }
           
           console.log(`Final metadata URL for token ${i}:`, metadataURL)

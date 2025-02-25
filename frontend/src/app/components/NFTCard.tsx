@@ -95,11 +95,12 @@ export function NFTCard({ tokenId, metadata, userAddress, nftContract, onTransfe
       {metadata ? (
         <>
           {/* NFT Image Container */}
-          <div className="aspect-square w-full relative">
+          <div className="aspect-square w-full relative bg-gray-50">
             <img
               src={metadata.image}
               alt={formattedName}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
+              loading="lazy"
             />
             <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-black/70 backdrop-blur-sm rounded-full">
               <span className="text-xs font-medium text-white">#{tokenId}</span>

@@ -12,6 +12,8 @@
     "@noble/curves": "^1.8.1",
     "@noble/hashes": "^1.7.1",
     "ethers": "^6.11.1",
+    "firebase": "^10.14.1",
+    "firebase-admin": "^12.0.0",
     "next": "15.1.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
