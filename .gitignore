@@ -44,9 +44,6 @@ package-lock.json
 # user uploads
 frontend/public/uploads/
 
-# generated contract types
-frontend/src/types/contracts/
-
 # IDE
 .idea/
 .vscode/ 

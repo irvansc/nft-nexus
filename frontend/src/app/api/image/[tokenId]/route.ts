@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 
 // Function to generate a deterministic color based on tokenId
 function generateColor(tokenId: string): string {
@@ -37,9 +37,9 @@ function generatePattern(tokenId: string): string {
 }
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: { tokenId: string } }
-) {
+): Promise<Response> {
   try {
     const tokenId = params.tokenId;
     const backgroundColor = generateColor(tokenId);
@@ -82,7 +82,7 @@ export async function GET(
       </svg>
     `.trim();
     
-    return new NextResponse(svg, {
+    return new Response(svg, {
       headers: {
         'Content-Type': 'image/svg+xml',
         'Cache-Control': 'public, max-age=31536000, immutable'
@@ -90,7 +90,7 @@ export async function GET(
     });
   } catch (error: any) {
     console.error('Error generating image:', error);
-    return NextResponse.json(
+    return Response.json(
       { error: error.message || 'Failed to generate image' },
       { status: 500 }
     );
