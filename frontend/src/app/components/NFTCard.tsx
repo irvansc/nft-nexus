@@ -108,31 +108,44 @@ export function NFTCard({ tokenId, metadata, userAddress, nftContract, onTransfe
               <span className="text-xs font-medium text-white">#{tokenId}</span>
             </div>
           </div>
-          {/* NFT Information */}
-          <div className="p-3 space-y-2">
-            <h3 className="text-xs font-medium text-gray-900">
-              {formattedName}
-            </h3>
-            
-            {/* Owner Information (shown if not the current user) */}
-            {owner && !isOwner && (
+
+          {/* Owner Information */}
+          {owner && !isOwner && (
+            <div className="mt-1.5">
               <a
                 href={`${NEXUS_EXPLORER_URL}/address/${owner}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-gray-500 hover:text-gray-700 block"
+                className="w-full py-2.5 text-sm font-medium text-white bg-black/90
+                         hover:bg-black transition-all group flex items-center justify-center gap-2
+                         border-t border-gray-800 rounded-lg"
               >
-                Owned by: {formatAddress(owner)}
+                <span>Owned by {formatAddress(owner)}</span>
+                <svg 
+                  className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
+                  />
+                </svg>
               </a>
-            )}
-            
-            {/* Transfer Controls (shown only to owner) */}
-            {isOwner && (
-              isTransferring ? (
+            </div>
+          )}
+
+          {/* Transfer Controls (shown only to owner) */}
+          {isOwner && (
+            isTransferring ? (
+              <div className="px-3 py-2 mt-1.5 border-t border-gray-100">
                 <div className="flex gap-1.5">
                   <input
                     type="text"
-                    placeholder="Recipient address"
+                    placeholder="Recipient address (0x...)"
                     value={transferAddress}
                     onChange={(e) => setTransferAddress(e.target.value)}
                     className="flex-1 px-2 py-1.5 text-xs bg-white rounded-md border border-gray-200 
@@ -141,23 +154,53 @@ export function NFTCard({ tokenId, metadata, userAddress, nftContract, onTransfe
                   />
                   <button
                     onClick={handleTransfer}
-                    className="px-2 py-1.5 text-xs font-medium text-white bg-black rounded-md
-                             hover:bg-gray-800 transition-colors"
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-black rounded-md
+                             hover:bg-gray-800 transition-colors flex items-center gap-1.5
+                             disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed"
                   >
-                    Send
+                    <span>Send</span>
+                    <svg 
+                      className="w-3 h-3 -rotate-45" 
+                      fill="none" 
+                      viewBox="0 0 24 24" 
+                      stroke="currentColor"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" 
+                      />
+                    </svg>
                   </button>
                 </div>
-              ) : (
+              </div>
+            ) : (
+              <div className="mt-1.5">
                 <button
                   onClick={() => setIsTransferring(true)}
-                  className="w-full px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-50 rounded-md
-                           hover:bg-gray-100 transition-colors"
+                  className="w-full py-2.5 text-sm font-medium text-white bg-black/90
+                           hover:bg-black transition-all group flex items-center justify-center gap-2
+                           border-t border-gray-800 rounded-lg"
                 >
-                  Transfer
+                  <span>Transfer NFT</span>
+                  <svg 
+                    className="w-4 h-4 -rotate-45 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" 
+                    fill="none" 
+                    viewBox="0 0 24 24" 
+                    stroke="currentColor"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" 
+                    />
+                  </svg>
                 </button>
-              )
-            )}
-          </div>
+              </div>
+            )
+          )}
         </>
       ) : (
         // Loading State

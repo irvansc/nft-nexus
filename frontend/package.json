@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync-types": "rm -rf types/contracts && cp -r ../contracts/typechain-types types/contracts"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1",

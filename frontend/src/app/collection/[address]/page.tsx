@@ -1,108 +1,160 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import { ethers } from 'ethers'
+import { useRouter } from 'next/navigation'
 import { use } from 'react'
-import { NFTCard } from '../../components/NFTCard'
-import { NFTMetadata } from '../../types/nft'
-import { NEXUS_EXPLORER_URL } from '../../config/constants'
-import type { SimpleNFT } from '../../../types/contracts/contracts/SimpleNFT'
+import { NEXUS_CHAIN_ID_HEX } from '../../config/constants'
 import { SimpleNFT__factory } from '../../../types/contracts/factories/contracts/SimpleNFT__factory'
+import type { SimpleNFT } from '../../../types/contracts/contracts/SimpleNFT'
+import { NFTCard } from '../../components/NFTCard'
+import { Navbar } from '../../components/Navbar'
+import { ExplorerLink } from '../../components/ExplorerLink'
 
-export default function CollectionPage({ params }: { params: Promise<{ address: string }> }) {
-  const { address } = use(params)
+interface NFTMetadata {
+  name: string;
+  description: string;
+  image: string;
+  external_url: string;
+  attributes: Array<{
+    trait_type: string;
+    value: string | number;
+    display_type?: string;
+  }>;
+}
+
+export default function Collection({ params: paramsPromise }: { params: Promise<{ address: string }> }) {
+  const { address } = use(paramsPromise)
   const router = useRouter()
+  const [isConnected, setIsConnected] = useState(false)
+  const [isCorrectNetwork, setIsCorrectNetwork] = useState(false)
   const [userAddress, setUserAddress] = useState('')
+  const [status, setStatus] = useState<{ type: 'error' | 'success' | 'info'; message: string; tx?: string }>({ type: 'info', message: '' })
   const [nftContract, setNftContract] = useState<SimpleNFT | null>(null)
-  const [collectionName, setCollectionName] = useState('')
-  const [nfts, setNfts] = useState<Array<{ tokenId: string; metadata: NFTMetadata | null }>>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [isOwner, setIsOwner] = useState(false)
   const [isMinting, setIsMinting] = useState(false)
-  const [status, setStatus] = useState('')
+  const [ownedNFTs, setOwnedNFTs] = useState<Array<{ tokenId: string; metadata: NFTMetadata | null }>>([])
+  const [isLoadingNFTs, setIsLoadingNFTs] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [isOwner, setIsOwner] = useState(false)
 
-  const fetchCollectionNFTs = useCallback(async (contract: SimpleNFT) => {
+  const checkNetwork = useCallback(async () => {
+    if (!window.ethereum) return false
+    const chainId = await window.ethereum.request({ method: 'eth_chainId' })
+    const isNexus = chainId === NEXUS_CHAIN_ID_HEX
+    setIsCorrectNetwork(isNexus)
+    return isNexus
+  }, [])
+
+  const switchNetwork = async () => {
+    if (!window.ethereum) return false
     try {
-      const totalSupply = await contract.totalSupply()
-      console.log('Total supply from contract:', totalSupply.toString())
-      
-      if (totalSupply === BigInt(0)) {
-        console.log('Collection is empty (totalSupply is 0)')
-        setNfts([])
-        return
-      }
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: NEXUS_CHAIN_ID_HEX }],
+      })
+      return await checkNetwork()
+    } catch (switchError: any) {
+      // Handle network switching errors
+      console.error('Error switching network:', switchError)
+      return false
+    }
+  }
 
+  const checkWalletConnection = useCallback(async () => {
+    if (typeof window.ethereum !== 'undefined') {
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum)
+        const accounts = await provider.listAccounts()
+        if (accounts.length > 0) {
+          setIsConnected(true)
+          setUserAddress(accounts[0].address)
+          await checkNetwork()
+        }
+      } catch (error) {
+        console.error('Error checking wallet connection:', error)
+      }
+    }
+  }, [checkNetwork])
+
+  const connectWallet = async () => {
+    if (typeof window.ethereum !== 'undefined') {
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum)
+        await provider.send('eth_requestAccounts', [])
+        const signer = await provider.getSigner()
+        const address = await signer.getAddress()
+        setUserAddress(address.toString())
+        setIsConnected(true)
+        await checkNetwork()
+      } catch (error) {
+        console.error('Error connecting wallet:', error)
+      }
+    }
+  }
+
+  const loadContract = useCallback(async () => {
+    if (!ethers.isAddress(address)) {
+      router.push('/')
+      return
+    }
+
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      const contract = SimpleNFT__factory.connect(address, provider)
+      
+      // Load contract details
+      const [name, owner] = await Promise.all([
+        contract.name(),
+        contract.owner()
+      ])
+
+      setCollectionName(name)
+      setIsOwner(owner.toLowerCase() === userAddress.toLowerCase())
+      setNftContract(contract)
+      
+      // Load NFTs
+      await fetchCollectionNFTs(contract)
+    } catch (error) {
+      console.error('Error loading contract:', error)
+      router.push('/')
+    }
+  }, [address, router, userAddress])
+
+  useEffect(() => {
+    checkWalletConnection()
+    
+    if (window.ethereum) {
+      window.ethereum.on('chainChanged', checkNetwork)
+      window.ethereum.on('accountsChanged', checkWalletConnection)
+    }
+
+    return () => {
+      if (window.ethereum) {
+        window.ethereum.removeListener('chainChanged', checkNetwork)
+        window.ethereum.removeListener('accountsChanged', checkWalletConnection)
+      }
+    }
+  }, [checkNetwork, checkWalletConnection])
+
+  useEffect(() => {
+    if (isConnected && isCorrectNetwork) {
+      loadContract()
+    }
+  }, [isConnected, isCorrectNetwork, loadContract])
+
+  const fetchCollectionNFTs = async (contract: SimpleNFT) => {
+    if (!contract) return
+
+    try {
+      setIsLoadingNFTs(true)
+      const totalSupply = await contract.totalSupply()
       const nfts: Array<{ tokenId: string; metadata: NFTMetadata | null }> = []
       
       for (let i = 1; i <= Number(totalSupply); i++) {
         try {
           const tokenURI = await contract.tokenURI(i)
-          console.log(`Raw tokenURI from contract for token ${i}:`, tokenURI)
-
-          // Skip if tokenURI is empty
-          if (!tokenURI) {
-            console.error(`Empty tokenURI for token ${i}`)
-            nfts.push({ tokenId: i.toString(), metadata: null })
-            continue
-          }
-
-          // Ensure the URL is properly formatted
-          let metadataURL = tokenURI
-          if (!tokenURI.startsWith('http')) {
-            // First, get the base URL from environment or window location
-            const baseURL = process.env.NEXT_PUBLIC_API_URL || window.location.origin
-            console.log('Base URL:', baseURL)
-            
-            // Always construct the full metadata URL with contract address
-            metadataURL = `${baseURL.replace(/\/+$/, '')}/api/metadata/${i}?contract=${address}`
-          } else if (!tokenURI.includes('contract=')) {
-            // If it's a full URL but missing contract parameter, add it
-            const separator = tokenURI.includes('?') ? '&' : '?'
-            metadataURL = `${tokenURI}${separator}contract=${address}`
-          }
-          
-          console.log(`Final metadata URL for token ${i}:`, metadataURL)
-
-          const response = await fetch(metadataURL, {
-            headers: {
-              'Accept': 'application/json',
-              'Cache-Control': 'no-cache'
-            }
-          })
-
-          // Log the full response details for debugging
-          console.log(`Response for token ${i}:`, {
-            status: response.status,
-            statusText: response.statusText,
-            url: response.url,
-            contentType: response.headers.get('content-type')
-          })
-
-          if (!response.ok) {
-            const errorText = await response.text()
-            console.error(`HTTP error for token ${i}:`, {
-              status: response.status,
-              statusText: response.statusText,
-              url: response.url,
-              responseText: errorText.substring(0, 200)
-            })
-            throw new Error(`HTTP error! status: ${response.status}`)
-          }
-
-          const contentType = response.headers.get('content-type')
-          if (!contentType || !contentType.includes('application/json')) {
-            const text = await response.text()
-            console.error(`Invalid content type for token ${i}:`, {
-              contentType,
-              responseText: text.substring(0, 200),
-              url: response.url
-            })
-            throw new Error(`Invalid content type: ${contentType}`)
-          }
-
-          const metadata = await response.json()
-          console.log(`Successfully fetched metadata for token ${i}:`, metadata)
+          const response = await fetch(tokenURI)
+          const metadata = response.ok ? await response.json() : null
           nfts.push({ tokenId: i.toString(), metadata })
         } catch (error) {
           console.error(`Error fetching NFT ${i}:`, error)
@@ -110,58 +162,84 @@ export default function CollectionPage({ params }: { params: Promise<{ address: 
         }
       }
       
-      setNfts(nfts)
+      setOwnedNFTs(nfts)
     } catch (error) {
       console.error('Error fetching NFTs:', error)
+    } finally {
+      setIsLoadingNFTs(false)
     }
-  }, [address])
+  }
 
-  useEffect(() => {
-    const initializeContract = async () => {
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          const provider = new ethers.BrowserProvider(window.ethereum)
-          const accounts = await provider.listAccounts()
-          if (accounts.length > 0) {
-            setUserAddress(accounts[0].address)
-          }
+  const mintNFT = async () => {
+    if (!nftContract) {
+      setStatus({ type: 'error', message: 'No NFT contract available' })
+      return
+    }
 
-          // Create contract instance using the factory
-          const contract = SimpleNFT__factory.connect(address, provider)
-          setNftContract(contract)
+    try {
+      setIsMinting(true)
+      setStatus({ type: 'info', message: 'Initiating NFT mint...' })
 
-          // Debug: Check tokenURI for token #1 if it exists
-          try {
-            const totalSupply = await contract.totalSupply()
-            console.log('Initial total supply:', totalSupply.toString())
-            if (totalSupply > 0) {
-              const tokenURI = await contract.tokenURI(1)
-              console.log('Debug - tokenURI for #1:', tokenURI)
+      const signer = await new ethers.BrowserProvider(window.ethereum).getSigner()
+      const contractWithSigner = nftContract.connect(signer)
+      
+      const tx = await contractWithSigner.mint()
+      setStatus({ 
+        type: 'info', 
+        message: 'Minting NFT... Monitoring transaction status...',
+        tx: tx.hash 
+      })
+
+      const receipt = await tx.wait()
+      
+      if (receipt && receipt.status === 1) {
+        const mintEvent = receipt.logs.find(
+          (log) => {
+            try {
+              const parsedLog = nftContract.interface.parseLog(log)
+              return parsedLog?.name === 'Transfer' && 
+                     parsedLog.args[0] === ethers.ZeroAddress
+            } catch {
+              return false
             }
-          } catch (error) {
-            console.error('Debug - Error checking tokenURI:', error)
           }
+        )
 
-          // Get collection name
-          const name = await contract.name()
-          setCollectionName(name)
-
-          // Check if user is owner
-          const owner = await contract.owner()
-          setIsOwner(owner.toLowerCase() === accounts[0]?.address.toLowerCase())
-
-          // Fetch NFTs
-          await fetchCollectionNFTs(contract)
+        let newTokenId = 'unknown'
+        try {
+          if (mintEvent) {
+            const parsedLog = nftContract.interface.parseLog(mintEvent)
+            if (parsedLog) {
+              newTokenId = parsedLog.args[2].toString()
+            }
+          }
         } catch (error) {
-          console.error('Error initializing contract:', error)
-        } finally {
-          setIsLoading(false)
+          console.error('Error parsing mint event:', error)
         }
-      }
-    }
 
-    initializeContract()
-  }, [address, fetchCollectionNFTs])
+        setStatus({ 
+          type: 'success', 
+          message: `NFT #${newTokenId} minted successfully`, 
+          tx: tx.hash 
+        })
+
+        // Refresh the gallery
+        await fetchCollectionNFTs(nftContract)
+      } else {
+        setStatus({ type: 'error', message: 'Minting failed. Please try again.' })
+      }
+    } catch (error: any) {
+      console.error('Minting error:', error)
+      // Only show user-friendly error messages
+      if (error?.code === 'ACTION_REJECTED') {
+        setStatus({ type: 'info', message: 'Transaction cancelled' })
+      } else {
+        setStatus({ type: 'error', message: 'Failed to mint NFT. Please try again.' })
+      }
+    } finally {
+      setIsMinting(false)
+    }
+  }
 
   const handleTransfer = async (tokenId: string, to: string) => {
     if (!nftContract || !to) return
@@ -169,173 +247,126 @@ export default function CollectionPage({ params }: { params: Promise<{ address: 
     try {
       const signer = await new ethers.BrowserProvider(window.ethereum).getSigner()
       const contractWithSigner = nftContract.connect(signer)
+      
       const tx = await contractWithSigner.transferFrom(userAddress, to, tokenId)
+      setStatus({ type: 'info', message: 'Transferring NFT...', tx: tx.hash })
+      
       await tx.wait()
+      setStatus({ type: 'success', message: 'NFT transferred successfully', tx: tx.hash })
       await fetchCollectionNFTs(nftContract)
-    } catch (error) {
-      console.error('Transfer error:', error)
-    }
-  }
-
-  const mintNFT = async () => {
-    if (!nftContract) {
-      setStatus('No NFT contract available')
-      return
-    }
-
-    try {
-      setIsMinting(true)
-      setStatus('Initiating NFT mint...')
-
-      const signer = await new ethers.BrowserProvider(window.ethereum).getSigner()
-      const contractWithSigner = nftContract.connect(signer)
-      
-      const tx = await contractWithSigner.mint()
-      setStatus(`Minting NFT... Transaction: ${tx.hash}\nMonitoring transaction status...`)
-
-      const receipt = await tx.wait()
-      
-      if (receipt && receipt.status === 1) {
-        const mintEvent = receipt.logs.find(
-          (log) => {
-            if ('fragment' in log && log.fragment?.name === 'Transfer' && 'args' in log) {
-              return log.args[0] === '0x0000000000000000000000000000000000000000'
-            }
-            return false
-          }
-        )
-        
-        const tokenId = mintEvent && 'args' in mintEvent ? mintEvent.args[1].toString() : 'unknown'
-
-        setStatus(`NFT minted successfully!
-          Transaction: ${tx.hash}
-          Token ID: ${tokenId}
-          View on Explorer: ${NEXUS_EXPLORER_URL}/tx/${tx.hash}`)
-
-        // Refresh the gallery
-        await fetchCollectionNFTs(nftContract)
-      } else {
-        throw new Error('Minting failed')
-      }
     } catch (error: any) {
-      console.error('Minting error:', error)
-      setStatus(`Minting failed: ${error.message || 'Unknown error'}`)
-    } finally {
-      setIsMinting(false)
+      console.error('Transfer error:', error)
+      if (error?.code === 'ACTION_REJECTED') {
+        setStatus({ type: 'info', message: 'Transfer cancelled' })
+      } else {
+        setStatus({ type: 'error', message: 'Failed to transfer NFT. Please try again.' })
+      }
     }
-  }
-
-  // Format status display for minting
-  const formatStatusDisplay = (status: string) => {
-    if (status.includes('NFT minted successfully')) {
-      const txHash = status.match(/Transaction: (0x[a-fA-F0-9]+)/)?.[1]
-      const tokenId = status.match(/Token ID: (\d+)/)?.[1]
-      
-      return (
-        <div className="flex flex-col items-center gap-2 py-2">
-          <div className="flex items-center gap-2">
-            <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-sm text-gray-600">NFT #{tokenId} minted</span>
-          </div>
-          <a
-            href={`${NEXUS_EXPLORER_URL}/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-blue-600 hover:text-blue-800"
-          >
-            View on Explorer
-          </a>
-        </div>
-      )
-    }
-
-    if (status.includes('Minting')) {
-      return (
-        <div className="flex items-center justify-center gap-2 py-2">
-          <div className="animate-spin rounded-full h-4 w-4 border-2 border-black border-t-transparent"></div>
-          <span className="text-sm text-gray-600">{status.split('\n')[0]}</span>
-        </div>
-      )
-    }
-
-    return status ? <p className="text-sm text-gray-600 text-center py-2">{status}</p> : null
   }
 
   return (
-    <main className="min-h-screen bg-white">
-      {/* Header */}
-      <header className="fixed top-0 left-0 right-0 bg-white z-50 border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => router.push('/')}
-                className="text-sm font-medium text-gray-600 hover:text-gray-900"
-              >
-                ← Back
-              </button>
-              <span className="text-sm text-gray-400">·</span>
-              <h1 className="text-sm font-medium text-gray-900">Nexus NFT</h1>
-            </div>
-          </div>
-        </div>
-      </header>
+    <main className="min-h-screen bg-white pt-14">
+      <Navbar
+        title="Nexus NFT"
+        isConnected={isConnected}
+        isCorrectNetwork={isCorrectNetwork}
+        userAddress={userAddress}
+        onConnect={connectWallet}
+        onSwitchNetwork={switchNetwork}
+        onNavigateHome={() => router.push('/')}
+      />
 
-      {/* Collection Info */}
-      <div className="pt-20 pb-8">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex flex-col gap-6">
-            {/* Collection Header */}
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-medium text-gray-900">{collectionName}</h2>
-              <span className="text-sm text-gray-400">·</span>
-              <a
-                href={`${NEXUS_EXPLORER_URL}/address/${address}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs font-mono text-gray-500 hover:text-gray-700"
-              >
-                {address.slice(0, 6)}...{address.slice(-4)}
-              </a>
+      {/* Collection Header */}
+      <div className="bg-gray-50 border-b border-gray-100">
+        <div className="max-w-6xl mx-auto px-4 py-6 md:py-8">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+            {/* Collection Info */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {collectionName || 'Loading...'}
+                </h1>
+                {isOwner && (
+                  <span className="px-2 py-0.5 text-xs font-medium text-green-700 bg-green-50 rounded-full">
+                    Owner
+                  </span>
+                )}
+              </div>
+
+              {/* Contract Address */}
+              <ExplorerLink
+                type="address"
+                value={address}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              />
             </div>
 
-            {/* Mint Section (Only shown to owner) */}
+            {/* Mint Button and Status */}
             {isOwner && (
-              <div className="bg-white rounded-lg border border-gray-200 p-5">
-                <div className="flex flex-col items-center gap-3">
-                  <button
-                    onClick={mintNFT}
-                    disabled={isMinting}
-                    className="w-full py-2 px-4 rounded-lg text-xs font-medium text-white bg-black 
-                             hover:bg-gray-800 transition-colors disabled:bg-gray-100 
-                             disabled:text-gray-400 disabled:cursor-not-allowed"
-                  >
-                    {isMinting ? 'Minting...' : 'Mint NFT'}
-                  </button>
-                  
-                  {status && (
-                    <div className="w-full">
-                      {formatStatusDisplay(status)}
-                    </div>
+              <div className="flex flex-col items-stretch md:items-end gap-2">
+                <button
+                  onClick={mintNFT}
+                  disabled={isMinting || !isCorrectNetwork}
+                  className={`w-full md:w-auto px-6 py-2.5 text-sm font-medium rounded-lg transition-all
+                            inline-flex items-center justify-center gap-2 min-w-[160px]
+                            ${isMinting || !isCorrectNetwork
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              : 'bg-black text-white hover:bg-gray-800 hover:shadow-sm active:transform active:scale-[0.98]'
+                            }`}
+                >
+                  <span>{isMinting ? 'Minting...' : 'Mint New NFT'}</span>
+                  {!isMinting && (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
                   )}
-                </div>
+                </button>
+
+                {/* Status Messages */}
+                {status.message && (
+                  <div className="text-right">
+                    <p className={`text-sm ${
+                      status.type === 'error' ? 'text-red-600' :
+                      status.type === 'success' ? 'text-green-600' :
+                      'text-gray-600'
+                    }`}>
+                      {status.message}
+                      {status.tx && (
+                        <>
+                          <span className="mx-1">·</span>
+                          <ExplorerLink
+                            type="transaction"
+                            value={status.tx}
+                            className={status.type === 'success' ? 'text-green-600' : 'text-gray-600'}
+                            showPrefix
+                          />
+                        </>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
+          </div>
+        </div>
+      </div>
 
+      {/* Main Content */}
+      <div className="py-8">
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="flex flex-col gap-6">
             {/* NFT Gallery */}
-            {isLoading ? (
+            {isLoadingNFTs ? (
               <div className="w-full flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-2 border-black"></div>
               </div>
-            ) : nfts.length === 0 ? (
+            ) : ownedNFTs.length === 0 ? (
               <div className="w-full py-16">
                 <p className="text-center text-gray-400">No NFTs in collection</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {nfts.map(({ tokenId, metadata }) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {ownedNFTs.map(({ tokenId, metadata }) => (
                   <NFTCard
                     key={tokenId}
                     tokenId={tokenId}

@@ -19,6 +19,7 @@
 import { NextResponse } from 'next/server';
 import { getStorage, ref, listAll, getDownloadURL, StorageReference } from 'firebase/storage';
 import { app } from '../../../../config/firebase';
+import { BASE_URL, API_URL } from '../../../config/constants';
 
 /**
  * Interface defining the structure of NFT metadata
@@ -139,9 +140,6 @@ export async function GET(
   console.log('[metadata] Request received for token:', tokenId);
   
   try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-    const websiteUrl = process.env.NEXT_PUBLIC_WEBSITE_URL || 'http://localhost:3000';
-
     // Get contract address from query params
     const url = new URL(request.url);
     const contractAddress = url.searchParams.get('contract');
@@ -166,8 +164,8 @@ export async function GET(
     const metadata: NFTMetadata = {
       name: `MyNFT #${tokenId}`,
       description: `NFT #${tokenId} on the Nexus network.`,
-      image: uploadedImage || `${apiUrl}/api/image/${tokenId}`,
-      external_url: `${websiteUrl}/nft/${tokenId}`,
+      image: uploadedImage || `${API_URL}/api/image/${tokenId}`,
+      external_url: `${BASE_URL}/nft/${tokenId}`,
       attributes: [
         {
           trait_type: "Token ID",

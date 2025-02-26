@@ -6,7 +6,6 @@ export interface EthereumProvider {
 
 // Augment the Window interface in the global scope
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-empty-interface
   interface Window {
     ethereum?: any;  // Use optional any type to avoid conflicts
   }
