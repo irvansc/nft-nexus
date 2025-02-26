@@ -6,20 +6,7 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { NEXUS_EXPLORER_URL, NEXUS_RPC_URL, NEXUS_CHAIN_ID_HEX, getMetadataBaseURI } from './config/constants'
 import { SimpleNFT__factory } from '../types/contracts/factories/contracts/SimpleNFT__factory'
-import type { SimpleNFT } from '../types/contracts/contracts/SimpleNFT'
 import { Navbar } from './components/Navbar'
-
-interface NFTMetadata {
-  name: string;
-  description: string;
-  image: string;
-  external_url: string;
-  attributes: Array<{
-    trait_type: string;
-    value: string | number;
-    display_type?: string;
-  }>;
-}
 
 // Add this function after the imports
 const generateNFTSymbol = (name: string): string => {
