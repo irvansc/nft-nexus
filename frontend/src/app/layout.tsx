@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nexus Counter",
-  description: "A simple counter on the Nexus blockchain",
+  title: "Nexus NFT Minter",
+  description: "A simple NFT minter on the Nexus blockchain",
 };
 
 export default function RootLayout({
